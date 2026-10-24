@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Roles and permission levels are plain strings because the SQLite connector
+// has no enum support. They are validated in application code.
+//   User.role:                USER | ADMIN
+//   DocumentPermission.level: READ | EDIT
+//   (OWNER is derived from Document.ownerId, ADMIN from User.role)
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("USER")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  documents          Document[]           @relation("DocumentOwner")
+  permissions        DocumentPermission[] @relation("PermissionUser")
+  grantedPermissions DocumentPermission[] @relation("PermissionGrantedBy")
+}
+
+model Document {
+  id           String    @id @default(uuid())
+  title        String
+  description  String?
+  originalName String
+  storedName   String    @unique
+  mimeType     String
+  size         Int
+  isPublic     Boolean   @default(false)
+  ownerId      String
+  owner        User      @relation("DocumentOwner", fields: [ownerId], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  permissions DocumentPermission[]
+
+  @@index([ownerId])
+}
+
+model DocumentPermission {
+  id          String   @id @default(uuid())
+  documentId  String
+  userId      String
+  level       String
+  grantedById String
+  createdAt   DateTime @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user      User     @relation("PermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User     @relation("PermissionGrantedBy", fields: [grantedById], references: [id])
+
+  @@unique([documentId, userId])
+  @@index([userId])
+}
+
+// Append-only. No foreign keys on purpose: log rows must survive deletion of
+// users/documents. UPDATE and DELETE are blocked by DB triggers (see src/db.js).
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  userEmail  String?
+  action     String
+  status     String // ALLOWED | DENIED
+  documentId String?
+  ipAddress  String?
+  userAgent  String?
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([documentId])
+  @@index([status])
+}
